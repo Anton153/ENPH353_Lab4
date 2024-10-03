@@ -11,24 +11,31 @@ import numpy as np
 class My_App(QtWidgets.QMainWindow):
 
     def __init__(self):
+        #initiates an instance of the QMainWindow class
         super(My_App, self).__init__()
+        #loads the user interfance from sift app.ui and applies it to the current instance of the My_App class, called self. 
         loadUi("./SIFT_app.ui", self)
 
+        #some params for the camera
         self._cam_id = 0
         self._cam_fps = 30
         self._is_cam_enabled = False
         self._is_template_loaded = False
 
+        #read inputs from the buttons in the UI
         self.browse_button.clicked.connect(self.SLOT_browse_button)
         self.toggle_cam_button.clicked.connect(self.SLOT_toggle_camera)
-        #load template image
-        self.template_img = cv2.imread("snowLeopard.jpg", cv2.IMREAD_GRAYSCALE)
-        self.sift = cv2.SIFT_create()
-        #detect keypoints
-        self.template_keypoints, self.template_descriptors = self.sift.detectAndCompute(self.template_img, None)
-        #match the template with the camera input
-        self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
 
+        self.template_img = cv2.imread("snowLeopard.jpg", cv2.IMREAD_GRAYSCALE)
+
+        #create a sift object detector
+        self.sift = cv2.SIFT_create()
+        #detect keypoints and descriptors for the template image
+        self.template_keypoints, self.template_descriptors = self.sift.detectAndCompute(self.template_img, None)
+        #Use brute force matcher object, which is a method of matching keypoints between two images
+        self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        
+        #initialize camera device
         self._camera_device = cv2.VideoCapture(self._cam_id)
         self._camera_device.set(3, 320)
         self._camera_device.set(4, 240)
@@ -38,14 +45,17 @@ class My_App(QtWidgets.QMainWindow):
         self._timer.timeout.connect(self.SLOT_query_camera)
         self._timer.setInterval(1000 / self._cam_fps)
 
+        #this works like an interrupt and checks button inputs. This calls the borse button input method
         self.browse_button.clicked.connect(self.SLOT_browse_button)
 
     def SLOT_browse_button(self):
+        #opens file dialog to allow file selection
         dlg = QtWidgets.QFileDialog()
+        #allow selection of file
         dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
         if dlg.exec_():
             self.template_path = dlg.selectedFiles()[0]
-
+        #displays images using QPixmap 
         pixmap = QtGui.QPixmap(self.template_path)
         self.template_label.setPixmap(pixmap)
         print("Loaded template image file: " + self.template_path)
@@ -58,29 +68,36 @@ class My_App(QtWidgets.QMainWindow):
         q_img = QtGui.QImage(cv_img.data, width, height, 
                         bytesPerLine, QtGui.QImage.Format_RGB888)
         return QtGui.QPixmap.fromImage(q_img)
-
+    
+    #The query camera method is used to query the camera and detect the object in the camera frame
     def SLOT_query_camera(self):
+        # ret = true or false, if frame was successfully captured 
+        # frame = the frame that was captured
         ret, frame = self._camera_device.read()
         
         if ret:
+            # gray scale image to make it easy to process
             gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
+            #compute the descriptors using the grayscale image
             keypoints_frame, descriptors_frame = self.sift.detectAndCompute(gray_frame, None)
 
             if descriptors_frame is not None:
+                #match the descriptors found in the image from the camera feed with the descriptors in the template image
                 matches = self.matcher.match(self.template_descriptors, descriptors_frame)
 
-                # Sort the matches based on distance (best matches first)
+                # Sort matches based on the quality of matches. Shorter distance = higher quality matches
                 matches = sorted(matches, key=lambda x: x.distance)
 
                 # Homography calculation
                 if len(matches) > 10:
-                    # these are the keypoints
+                    # If there are at least 10 matches, extract the coordinates in the images of the matches. 
                     src_pts = np.float32([self.template_keypoints[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
                     dst_pts = np.float32([keypoints_frame[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
 
-                    # Find homography matrix
+                    # Use RANSAC to compute the homopgraphy matrix. This gives the transformation between the template and the frame. 
                     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+                    #This draws the blue square around the detected object
                     if M is not None:
                         # Get the corners of the template image
                         h, w = self.template_img.shape
